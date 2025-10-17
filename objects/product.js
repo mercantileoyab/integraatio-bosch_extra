@@ -2,13 +2,11 @@ class Product{
     constructor(
         articleNr,
         rule,
-        parameter,
-        parentProductGroup
+        parameter
     ) {
         this.articleNr = articleNr,
         this.rule = rule,
-        this.parameter = parameter,
-        this.parentProductGroup = parentProductGroup
+        this.parameter = parameter
     }
 }
 

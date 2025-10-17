@@ -21,18 +21,49 @@ const getCustomersInExtra = async (configFile) => {
     }
 };
 
-// Getting products that are in Bosch EXTRA + getting those Productgroup id:s
-const getProductGroups = async (configFile, itemIds, country) => {
-    // console.log('Getting product groups from Bosch EXTRA')
-    const { config } = configFile
+// Getting products and linked PG for all products and saving data to file in ./tmp
+const getProductGroupsToAllProducts = async (configFile, country) => {
+    const { config } = configFile;
+
+    // Version 3.7 api
     const data = JSON.stringify({
         "country": country.toUpperCase(),
         "tradelevel": "WORKSHOP",
-        "withChildElements": false,
+        "withChildElements": true,
+        "partnerId": 1,
+        "productGroups": [
+            {
+                "name": "PG001"  // All products
+            }
+        ]
+    })
+
+    try {
+        const response = await axios.post('productgroup/get', data, config)
+        // Save response.data to file in ./tmp
+        fs.writeFileSync('./tmp/all_products_with_pg.json', JSON.stringify(response.data, null, 2), 'utf-8');
+        console.log('All products with product groups saved to ./tmp/all_products_with_pg.json');
+        
+    } catch(err) {
+        console.error(err)
+    }
+};
+
+// Getting products that are in Bosch EXTRA + getting those Productgroup id:s
+const getProductGroups = async (configFile, itemIds, country) => {
+    const { config } = configFile;
+
+    // Version 3.7 api
+    const data = JSON.stringify({
+        "country": country.toUpperCase(),
+        "tradelevel": "WORKSHOP",        
+        "partnerId": 1,           // <-- now at root level
+        "withChildElements": true,
+        "withPointsOnly": true,
+        "omitPointsInResponse": false,
         "productGroups": itemIds.map(item => {
             return {
-                "name": item,
-                "partner": 1
+                "name": item
             }
         })
     })
@@ -40,7 +71,7 @@ const getProductGroups = async (configFile, itemIds, country) => {
     try {
         const response = await axios.post('productgroup/get', data, config)
         return response?.data.productGroups.map(obj => {
-            return new Product(obj.name, obj.rule, obj.parameter, obj.parentProductGroup)
+            return new Product(obj.name, obj.rule, obj.parameter)
         })
         
     } catch(err) {
@@ -199,7 +230,7 @@ const createTurnoverObjects = (saleslines, wholesaler) => {
             wholesaler,
             getPeriod(l.createdDatetime),
             l.lineAmount,
-            l.parentProductGroup.name,
+            l.importerProductCode,
             l.salesid
         )
     })
@@ -222,5 +253,6 @@ module.exports = {
     createTurnoverObjects,
     bookPoints,
     getFailedTurnovers,
-    clearAllFailedTurnovers
+    clearAllFailedTurnovers,
+    getProductGroupsToAllProducts
 };

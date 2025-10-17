@@ -1,9 +1,10 @@
 const dotenv = require('dotenv');
 const https = require('https');
-const { getSaleslines } = require('./dbProcess');
+const { getSaleslines, readCustomersBoschExtra, addCustomersBoschExtraBulk } = require('./dbProcess');
 const { getCustomersInExtra, 
     getProductGroups, 
     createTurnoverObjects,
+    // getProductGroupsToAllProducts,
     bookPoints,
     getFailedTurnovers,
     clearAllFailedTurnovers } = require('./apiBosch')
@@ -57,11 +58,30 @@ const config = getConfig()
 const processSaleslines = async () => {
     try {
 
-        // 1. Get customers registered to Bosch Extra
+        // 1. Get customers registered to Bosch Extra & add if new add to CustomersBoschExtra -table
         const customers = await getCustomersInExtra(config);
-        // console.log(customers)
+        
+        const currentCustomers = await readCustomersBoschExtra(
+            process.env.ORUM_DATABASE_URL,
+            process.env.ORUM_DATABASE_NAME,
+            process.env.ORUM_DATABASE_USERNAME,
+            process.env.ORUM_DATABASE_PASSWORD
+        );
+        const newCustomers = customers.filter(cust => !currentCustomers.some(curr => curr.customerId === cust.customerId));
+        
+        if (newCustomers.length > 0) {
+            await addCustomersBoschExtraBulk(
+                process.env.ORUM_DATABASE_URL,
+                process.env.ORUM_DATABASE_NAME,
+                process.env.ORUM_DATABASE_USERNAME,
+                process.env.ORUM_DATABASE_PASSWORD,
+                newCustomers
+            );
+        } else {
+            console.log('No new customers to add');
+        }
 
-        // 2. Get saleslines for Bosch-labeled articles from AX for yesterday
+        // 2. Get saleslines for Bosch-labeled articles from AX for yesterday for Bosch Extra customers
         let saleslines = await getSaleslines(
             process.env.ORUM_DATABASE_URL,
             process.env.ORUM_DATABASE_NAME,
@@ -69,34 +89,37 @@ const processSaleslines = async () => {
             process.env.ORUM_DATABASE_PASSWORD
         );
 
+        console.log(saleslines.length + ' saleslines fetched from database');
+
+        // 3. Filter saleslines - if no in EXTRA, filter out
+
+        // 3.1 Get all articles in Bosch EXTRA
+        const itemIds = [...new Set(saleslines.map(line => line.importerProductCode))];
         
-
-        // 3. Filter saleslines where the customer is registered to Bosch EXTRA
-        saleslines = saleslines.filter(line => 
-            customers.some(customer => customer.customerId === line.custAccount)
-        );
-
-        // console.log('Saleslines count: ' + saleslines.length)
-
-        // 4. Filter saleslines where article is part of Bosch Extra & add Bosch Extra info to lines
-        const products = await getProductGroups(config, [...new Set(saleslines.map(line => line.itemId))], process.env.API_BOSCH_COUNTRY)
+        // Send requests in batches of 300 articles
+        const batchSize = 300;
+        let itemsInExtra = [];
         
-        saleslines = saleslines
-            // Filtering saleslines where article can be found from products
-            .filter(line => {
-            return products.some(product => product.articleNr === line.itemId)   
-            })
-            // Adding Bosch EXTRA product data to salesline-objects
-            .map(line => {
-                const found = products.find(product => product.articleNr === line.itemId)
-                return {...line, ...found}
-            })
+        for (let i = 0; i < itemIds.length; i += batchSize) {
+            const batch = itemIds.slice(i, i + batchSize);
+            
+            const batchResults = await getProductGroups(config, batch, process.env.API_BOSCH_COUNTRY);
+            itemsInExtra = itemsInExtra.concat(batchResults);
+        }
 
-        // console.log('Saleslines (2) count: ' + saleslines.length)
-        // 5. Create turnovers based on saleslines
-        const turnovers = createTurnoverObjects(saleslines, process.env.API_BOSCH_WHOLESALER)
+        // 3.2 Compare saleslines articles to those in EXTRA
+        // 3.3 If match, keep the line, if not, filter out
+        saleslines = saleslines.filter(line => {
+            return itemsInExtra.some(item => item.articleNr === line.importerProductCode);
+        });
+
+        console.log(saleslines.length + ' saleslines after filtering with Bosch EXTRA articles');
+
+        // 4. Create turnovers based on saleslines
+        // 4.1 Create turnover objects
+        const turnovers = createTurnoverObjects(saleslines, process.env.API_BOSCH_WHOLESALER);
         
-        // 6. Send turnovers to Bosch EXTRA and book points
+        // 5. Send turnovers to Bosch EXTRA and book points
         bookPoints(config, turnovers, process.env.API_BOSCH_COUNTRY, process.env.API_BOSCH_BATCHSIZE)
 
 
@@ -130,120 +153,12 @@ const processFailedTurnovers = async () => {
     }
 }
 
-
-const processSaleslinesTest = async () => {
-    try {
-
-        // 1. Get customers registered to Bosch Extra
-        const customers = await getCustomersInExtra(config);
-        console.log(`Checking if customerid includes '61-225027'`)
-        customers.forEach(customer => {
-            if (customer.customerId.includes('61-225027')) {
-                console.log(customer);
-            }
-        });
-        console.log('-------------------')
-
-        // 2. Get saleslines for Bosch-labeled articles from AX for yesterday
-        let saleslines = await getSaleslines(
-            process.env.ORUM_DATABASE_URL,
-            process.env.ORUM_DATABASE_NAME,
-            process.env.ORUM_DATABASE_USERNAME,
-            process.env.ORUM_DATABASE_PASSWORD
-        );
-
-        console.log(`Checking if saleslines filtered customerid includes '61-225027'`)
-        saleslines.forEach(line => {
-            if (line.custAccount.includes('61-225027')) {
-                console.log(line);
-            }
-        });
-        console.log('-------------------')
-        
-
-        // 3. Filter saleslines where the customer is registered to Bosch EXTRA
-        saleslines = saleslines.filter(line => 
-            customers.some(customer => customer.customerId === line.custAccount)
-        );
-
-        // console.log('Saleslines count: ' + saleslines.length)
-
-        
-        // 4. Filter saleslines where article is part of Bosch Extra & add Bosch Extra info to lines
-        const products = await getProductGroups(config, [...new Set(saleslines.map(line => line.itemId))], process.env.API_BOSCH_COUNTRY)
-        
-        saleslines = saleslines
-            // Filtering saleslines where article can be found from products
-            .filter(line => {
-            return products.some(product => product.articleNr === line.itemId)   
-            })
-            // Adding Bosch EXTRA product data to salesline-objects
-            .map(line => {
-                const found = products.find(product => product.articleNr === line.itemId)
-                return {...line, ...found}
-            })
-        
-        saleslines.forEach(line => {
-            if (line.custAccount.includes('61-225027')) {
-                console.log(line);
-            }
-        })
-
-        console.log('-------------------')
-        console.log(`Creating turnvover objects...`)
-        // console.log('Saleslines (2) count: ' + saleslines.length)
-        // 5. Create turnovers based on saleslines
-        const turnovers = createTurnoverObjects(saleslines, process.env.API_BOSCH_WHOLESALER)
-        turnovers.forEach(turnover => {
-            if (turnover.customer.includes('225027')) {
-                console.log(turnover);
-            }
-        })
-
-
-        // 6. Send turnovers to Bosch EXTRA and book points
-        // bookPoints(config, turnovers, process.env.API_BOSCH_COUNTRY, process.env.API_BOSCH_BATCHSIZE)
-
-
-    } catch (err) {
-        console.error("Error processing saleslines:", err);
-        throw err;
-    }
-}
-
-const customersTesting = async () => {
-    try {
-        const customers = await getCustomersInExtra(config);
-        customers.filter(customer => customer.customerId.includes('61-61-')).forEach(customer => {
-            console.log(customer);
-        })
-    } catch (err) {
-        console.error("Error getting customers in Bosch Extra:", err);
-        throw err;
-    }
-}
-
-const getProductGroupsTest = async (country, itemIds) => {
-    try {
-        const products = await getProductGroups(config, itemIds, country);
-        // products.forEach(product => {
-        //     console.log(product);
-        // })
-    } catch (err) {
-        console.error("Error getting product groups:", err);
-        throw err;
-    }
-}
-
 const mode = process.argv[3]
 
 if (mode === undefined) {
     processSaleslines();
 } else if (mode === "handlefailed") {
     processFailedTurnovers();
-} else if (mode === "testing") {
-    processTest();
 } else if (mode === "test") {
-    // customersTesting();
-    getProductGroupsTest(process.env.API_BOSCH_COUNTRY, ['0986479C20', '0986479939', '0986494668'], 'FI')
+    console.log('Test mode - no operations defined yet');
 }

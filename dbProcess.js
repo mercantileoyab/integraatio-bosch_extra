@@ -37,12 +37,21 @@ const closeConnection = async (pool) => {
 
 const queryAndCreateSaleslines = async (pool) => {
     try {
+        
         // This query result for testing
-        // const result = await pool.request().query("SELECT TOP(20) * FROM BoschSaleslinesYesterdayTest;");
+        // const result = await pool.request().query(`
+        //     SELECT TOP (20) s.*
+        //     FROM BoschSaleslinesYesterdayTest s
+        //     JOIN CustomersBoschExtra c ON s.CUSTACCOUNT = c.customerId
+        // `);
 
         // Production query
-        const result = await pool.request().query("SELECT * FROM BoschSaleslinesYesterday;");
-        
+        const result = await pool.request().query(`
+            SELECT s.*
+            FROM BoschSaleslinesYesterday s
+            JOIN CustomersBoschExtra c ON s.CUSTACCOUNT = c.customerId
+        `);
+
         const saleslines = result.recordset.map(row => new Salesline(
             row.SALESID,
             row.ITEMID,
@@ -86,9 +95,71 @@ const getSaleslines = async (database_url, database_name, database_username, dat
     }
 }
 
+const readCustomersBoschExtra = async (database_url, database_name, database_username, database_password) => {
+    try {
+        const pool = await connection(
+            database_url,
+            database_name,
+            database_username,
+            database_password
+        );
+        const result = await pool.request().query("SELECT * FROM CustomersBoschExtra;");
+        return result.recordset;
+    } catch (error) {
+        console.error("Error reading CustomersBoschExtra:", error);
+        throw error;
+    }
+}
+
+// Strategy 1: Bulk insert using table-valued parameter (most efficient for large datasets)
+const addCustomersBoschExtraBulk = async (database_url, database_name, database_username, database_password, customers) => {
+    try {
+        const pool = await connection(
+            database_url,
+            database_name,
+            database_username,
+            database_password
+        );
+
+        const table = new mssql.Table('CustomersBoschExtra');
+        table.create = false; // Don't create the table, it should already exist
+
+    // Match SQL Server schema: varchar(255), varchar(50), int, varchar(255)
+    table.columns.add('customerId', mssql.VarChar(255), { nullable: true });
+    table.columns.add('status', mssql.VarChar(50), { nullable: true });
+    table.columns.add('wholesalerId', mssql.Int, { nullable: true });
+    table.columns.add('wholesalerName', mssql.VarChar(255), { nullable: true });
+
+        // Debug: print first 3 customers
+        customers.slice(0, 3).forEach((customer, idx) => {
+            console.log(`Bulk insert customer[${idx}]:`, customer);
+        });
+
+        customers.forEach(customer => {
+            table.rows.add(
+                customer.customerId ? String(customer.customerId) : null,
+                customer.status ? String(customer.status) : null,
+                customer.wholesalerId !== undefined ? parseInt(customer.wholesalerId) : null,
+                customer.wholesalerName ? String(customer.wholesalerName) : null
+            );
+        });
+        
+        const request = pool.request();
+        const result = await request.bulk(table);
+        console.log(`Bulk inserted ${customers.length} customers successfully`);
+        return result;
+    } catch (error) {
+        console.error("Error bulk adding customers to CustomersBoschExtra:", error);
+        throw error;
+    }
+}
+
+
 module.exports = {
     connection,
     closeConnection,
     queryAndCreateSaleslines,
-    getSaleslines
+    getSaleslines,
+    readCustomersBoschExtra,
+    addCustomersBoschExtraBulk
 }
