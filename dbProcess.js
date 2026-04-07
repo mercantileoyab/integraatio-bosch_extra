@@ -10,10 +10,17 @@ const connection = async (server_url, database_name, database_username, database
             password: database_password,
             options: {
                 encrypt: false,
-                trustServerCertificate: true
+                trustServerCertificate: true,
+                enableArithAbort: true,
+                cancelTimeout: 30000 // 30 seconds for cancel operations
             },
-            connectionTimeout: 60000, // 60 seconds
-            requestTimeout: 60000 // 60 seconds
+            connectionTimeout: 120000, // 120 seconds (2 minutes)
+            requestTimeout: 600000, // 600 seconds (10 minutes) - very long for linked server queries
+            pool: {
+                max: 10,
+                min: 0,
+                idleTimeoutMillis: 30000
+            }
         };
 
         const pool = await mssql.connect(config);
@@ -51,6 +58,84 @@ const queryAndCreateSaleslines = async (pool) => {
             FROM BoschSaleslinesYesterday s
             JOIN CustomersBoschExtra c ON s.CUSTACCOUNT = c.customerId
         `);
+
+        // Query for getting all saleslines for specific customer
+//         const result = await pool.request().query(`
+//             with cte as (
+// 	select
+// 		SALESID,
+// 		ITEMID,
+// 		LINEAMOUNT,
+// 		QTYORDERED,
+// 		CUSTACCOUNT,
+// 		CREATEDDATETIME
+// 	from openquery(sahorumax30, '
+// 		SELECT
+// 			SALESID,
+// 			ITEMID,
+// 			LINEAMOUNT,
+// 			QTYORDERED,
+// 			CUSTACCOUNT,
+// 			CREATEDDATETIME
+// 		FROM [DAX2012R3_MRC_PROD].[dbo].[SALESLINE]
+// 		WHERE CREATEDDATETIME >= ''2025-03-11''
+// 			AND SALESSTATUS != 4
+// 			AND CUSTACCOUNT = ''61-71243''
+// 	')
+// )
+
+// select
+// 	e.SALESID,
+// 	e.ITEMID,
+// 	e.LINEAMOUNT,
+// 	e.QTYORDERED,
+// 	e.CUSTACCOUNT,
+// 	CASE 
+//         WHEN e.CREATEDDATETIME < '2026-01-01'
+//         THEN '2026-01-12 06:21:37.000'
+//         ELSE e.CREATEDDATETIME
+// 	END AS CREATEDDATETIME,
+// 	--e.CREATEDDATETIME,
+// 	pt.ProductLabel,
+// 	pt.ImporterProductCode
+// from cte e
+// join ProductsTable pt on e.ITEMID = pt.ArticleNr collate Finnish_Swedish_CI_AS
+// where pt.ProductLabel = 'BOSCH'
+//         `);
+            
+
+// with cte as (
+// 	select
+// 		SALESID,
+// 		ITEMID,
+// 		LINEAMOUNT,
+// 		QTYORDERED,
+// 		CUSTACCOUNT,
+// 		CREATEDDATETIME
+// 	from openquery(sahorumax30, '
+// 		SELECT
+// 			SALESID,
+// 			ITEMID,
+// 			LINEAMOUNT,
+// 			QTYORDERED,
+// 			CUSTACCOUNT,
+// 			CREATEDDATETIME
+// 		FROM [DAX2012R3_MRC_PROD].[dbo].[SALESLINE]
+// 		WHERE CREATEDDATETIME >= ''2025-1-1''
+// 			AND CUSTACCOUNT = ''61-2622447''
+// 			AND SALESSTATUS != 4
+
+// 	')
+// )
+
+// select
+// 	e.*,
+// 	pt.ProductLabel,
+// 	pt.ImporterProductCode
+// from cte e
+// join ProductsTable pt on e.ITEMID = pt.ArticleNr collate Finnish_Swedish_CI_AS
+// where pt.ProductLabel = 'BOSCH'
+//         `);
 
         const saleslines = result.recordset.map(row => new Salesline(
             row.SALESID,
