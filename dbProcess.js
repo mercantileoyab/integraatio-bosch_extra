@@ -53,11 +53,11 @@ const queryAndCreateSaleslines = async (pool) => {
         // `);
 
         // Production query
-        const result = await pool.request().query(`
-            SELECT s.*
-            FROM BoschSaleslinesYesterday s
-            JOIN CustomersBoschExtra c ON s.CUSTACCOUNT = c.customerId
-        `);
+        // const result = await pool.request().query(`
+        //     SELECT s.*
+        //     FROM BoschSaleslinesYesterday s
+        //     JOIN CustomersBoschExtra c ON s.CUSTACCOUNT = c.customerId
+        // `);
 
         // Query for getting all saleslines for specific customer
 //         const result = await pool.request().query(`
@@ -103,39 +103,41 @@ const queryAndCreateSaleslines = async (pool) => {
 // where pt.ProductLabel = 'BOSCH'
 //         `);
             
+const result = await pool.request().query(`
+  with cte as (
+  	select
+  		SALESID,
+  		ITEMID,
+  		LINEAMOUNT,
+  		QTYORDERED,
+  		CUSTACCOUNT,
+  		CREATEDDATETIME
+  	from openquery(sahorumax30, '
+  		SELECT
+  			SALESID,
+  			ITEMID,
+  			LINEAMOUNT,
+  			QTYORDERED,
+  			CUSTACCOUNT,
+  			CREATEDDATETIME
+  		FROM [DAX2012R3_MRC_PROD].[dbo].[SALESLINE]
+  		WHERE CREATEDDATETIME >= ''2026-2-23''
+  			AND CUSTACCOUNT = ''61-225013''
+  			AND SALESSTATUS != 4
+            AND SALESID != ''61-94084054''
 
-// with cte as (
-// 	select
-// 		SALESID,
-// 		ITEMID,
-// 		LINEAMOUNT,
-// 		QTYORDERED,
-// 		CUSTACCOUNT,
-// 		CREATEDDATETIME
-// 	from openquery(sahorumax30, '
-// 		SELECT
-// 			SALESID,
-// 			ITEMID,
-// 			LINEAMOUNT,
-// 			QTYORDERED,
-// 			CUSTACCOUNT,
-// 			CREATEDDATETIME
-// 		FROM [DAX2012R3_MRC_PROD].[dbo].[SALESLINE]
-// 		WHERE CREATEDDATETIME >= ''2025-1-1''
-// 			AND CUSTACCOUNT = ''61-2622447''
-// 			AND SALESSTATUS != 4
+  	')
+  )
 
-// 	')
-// )
-
-// select
-// 	e.*,
-// 	pt.ProductLabel,
-// 	pt.ImporterProductCode
-// from cte e
-// join ProductsTable pt on e.ITEMID = pt.ArticleNr collate Finnish_Swedish_CI_AS
-// where pt.ProductLabel = 'BOSCH'
-//         `);
+  select
+  	e.*,
+  	pt.ProductLabel,
+  	pt.ImporterProductCode
+  from cte e
+  join ProductsTable pt on e.ITEMID = pt.ArticleNr collate Finnish_Swedish_CI_AS
+  where pt.ProductLabel = 'BOSCH'
+ 
+        `);
 
         const saleslines = result.recordset.map(row => new Salesline(
             row.SALESID,
